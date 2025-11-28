@@ -1,0 +1,154 @@
+#!/bin/bash
+
+# 飞牛OS Ollama+OpenWebUI 完整适配版脚本（v7.0）
+# 解决问题：OpenWebUI源码包目录层级、requirements.txt路径、虚拟环境权限
+
+# 适配路径（飞牛OS定制版）
+AI_INSTALLER="/vol1/@appcenter/ai_installer"
+OLLAMA_DIR="$AI_INSTALLER/ollama"
+OLLAMA_BIN="$OLLAMA_DIR/bin/ollama"
+WEBUI_DIR="$AI_INSTALLER/ui"
+
+# 升级包路径
+OLLAMA_TGZ="/tmp/ollama-linux-amd64.tgz"
+WEBUI_TGZ="/tmp/open-webui.tar.gz"
+
+# 官网下载链接模板
+OLLAMA_DOWNLOAD_URL="https://github.com/ollama/ollama/releases/download/v${OLLAMA_VER}/ollama-linux-amd64.tgz"
+WEBUI_DOWNLOAD_URL="https://github.com/open-webui/open-webui/archive/refs/tags/v${WEBUI_VER}.tar.gz"
+
+# 验证基础路径
+if [ ! -f "$OLLAMA_BIN" ]; then
+    echo "❌ 未找到Ollama核心文件：$OLLAMA_BIN"
+    exit 1
+fi
+if [ ! -d "$WEBUI_DIR" ]; then
+    echo "❌ 未找到OpenWebUI目录：$WEBUI_DIR"
+    exit 1
+fi
+echo "✅ 确认安装路径："
+echo "  Ollama核心：$OLLAMA_BIN"
+echo "  OpenWebUI：$WEBUI_DIR"
+
+# 2. 输入版本号
+echo -e "\n步骤1：输入目标版本号"
+read -p "请输入Ollama版本号（如0.11.11）：" OLLAMA_VER
+read -p "请输入OpenWebUI版本号（如0.6.28，回车跳过）：" WEBUI_VER
+
+# 验证Ollama版本格式
+if ! echo "$OLLAMA_VER" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+$"; then
+    echo "❌ Ollama版本号格式错误（必须是x.x.x）"
+    exit 1
+fi
+echo "✅ 目标版本：Ollama v$OLLAMA_VER，OpenWebUI v$WEBUI_VER"
+
+# 2.5 从官网下载源码包（新增步骤）
+echo -e "\n步骤2：从官网下载升级包"
+# 下载Ollama升级包
+echo -e "\n正在下载Ollama v$OLLAMA_VER..."
+OLLAMA_URL=$(echo "$OLLAMA_DOWNLOAD_URL" | sed "s/{VERSION}/$OLLAMA_VER/")
+if wget -q -O "$OLLAMA_TGZ" "$OLLAMA_URL"; then
+    echo "✅ Ollama下载成功：$OLLAMA_TGZ"
+else
+    echo "⚠️ Ollama官网下载失败，将尝试使用本地包"
+fi
+
+# 检查本地包是否存在
+if [ ! -f "$OLLAMA_TGZ" ]; then
+    echo "❌ 本地Ollama包也不存在：$OLLAMA_TGZ"
+    exit 1
+fi
+
+# 下载OpenWebUI升级包（如果指定了版本号）
+if [ -n "$WEBUI_VER" ]; then
+    echo -e "\n正在下载OpenWebUI v$WEBUI_VER..."
+    WEBUI_URL=$(echo "$WEBUI_DOWNLOAD_URL" | sed "s/{VERSION}/$WEBUI_VER/")
+    if wget -q -O "$WEBUI_TGZ" "$WEBUI_URL"; then
+        echo "✅ OpenWebUI下载成功：$WEBUI_TGZ"
+    else
+        echo "⚠️ OpenWebUI官网下载失败，将尝试使用本地包"
+    fi
+fi
+
+# 检查本地包是否存在
+if [ ! -f "$WEBUI_TGZ" ]; then
+    echo "❌ 本地OpenWebUI包也不存在：$WEBUI_TGZ"
+    exit 1
+fi
+
+# 3. 验证升级包
+echo -e "\n步骤3：验证升级包"
+if [ ! -f "$OLLAMA_TGZ" ]; then
+    echo "❌ 未找到Ollama升级包：$OLLAMA_TGZ"
+    exit 1
+fi
+if [ -n "$WEBUI_VER" ] && [ ! -f "$WEBUI_TGZ" ]; then
+    echo "❌ 未找到OpenWebUI升级包：$WEBUI_TGZ"
+    exit 1
+fi
+echo "✅ 所有升级包验证通过"
+
+# 4. 停止服务（强制模式）
+echo -e "\n步骤4：停止服务（强制模式）"
+# 停止Ollama
+if ps aux | grep -v grep | grep "ollama/bin/ollama" &> /dev/null; then
+    echo "🔴 停止所有Ollama进程"
+    sudo pkill -f "ollama/bin/ollama"
+    sleep 2
+fi
+
+# 停止OpenWebUI
+if [ -n "$WEBUI_VER" ] && ps aux | grep -v grep | grep "ui/venv/bin/python" &> /dev/null; then
+    echo "🔴 停止所有OpenWebUI进程"
+    sudo pkill -f "ui/venv/bin/python"
+    sleep 2
+fi
+
+# 5. 备份旧版本
+echo -e "\n步骤5：备份旧版本"
+# 备份Ollama
+OLLAMA_BAK="$AI_INSTALLER/ollama_bak_$(date +%Y%m%d_%H%M%S)"
+sudo mv "$OLLAMA_DIR" "$OLLAMA_BAK"
+echo "✅ Ollama备份至：$OLLAMA_BAK"
+
+# 备份OpenWebUI
+if [ -n "$WEBUI_VER" ]; then
+    WEBUI_BAK="$AI_INSTALLER/ui_bak_$(date +%Y%m%d_%H%M%S)"
+    sudo mv "$WEBUI_DIR" "$WEBUI_BAK"
+    echo "✅ OpenWebUI备份至：$WEBUI_BAK"
+fi
+
+# 6. 升级Ollama
+echo -e "\n步骤6：升级Ollama"
+sudo mkdir -p "$OLLAMA_DIR"
+sudo tar -xzf "$OLLAMA_TGZ" -C "$OLLAMA_DIR"
+sudo chmod +x "$OLLAMA_BIN"
+sudo chown -R GL:Users "$OLLAMA_DIR"
+echo "✅ Ollama升级完成"
+
+# 7. 升级OpenWebUI（适配源码包结构）
+if [ -n "$WEBUI_VER" ]; then
+    echo -e "\n步骤7：升级OpenWebUI（源码包模式）"
+    sudo mkdir -p "$WEBUI_DIR"
+    # 处理源码包层级：先解压到/tmp，再移动核心文件（解决版本号目录问题）
+    echo "  解压并整理WebUI源码..."
+    sudo tar -xzf "$WEBUI_TGZ" -C /tmp  # 解压到临时目录
+    # 自动识别源码目录（如open-webui-0.6.28）
+    WEBUI_SRC_DIR=$(find /tmp -maxdepth 1 -type d -name "open-webui-*" | head -n 1)
+    if [ -z "$WEBUI_SRC_DIR" ]; then
+        echo "❌ 未找到OpenWebUI源码目录，请检查升级包是否正确"
+        exit 1
+    fi
+    # 移动所有文件到目标目录
+    sudo mv "$WEBUI_SRC_DIR"/* "$WEBUI_DIR/"
+    # 清理临时文件
+    sudo rm -rf "$WEBUI_SRC_DIR"
+    # 修复权限
+    sudo chown -R GL:Users "$WEBUI_DIR"
+    # 进入WebUI目录
+    cd "$WEBUI_DIR"
+    # 创建并激活虚拟环境
+    echo "  安装依赖（指向backend目录下的requirements.txt）"
+    echo "  cd backend"
+    echo "  code"
+fi
