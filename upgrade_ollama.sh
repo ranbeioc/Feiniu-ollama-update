@@ -3,9 +3,9 @@
 set -e
 set -o pipefail
 
-echo "🔄 Ollama 升级脚本 for FnOS, 稳定版 v2.2"
+echo "🔄 Ollama 升级脚本 for FnOS（国内镜像版 v2.3）"
 
-# 1. 查找 Ollama 安装路径
+# 1. 查找安装路径
 VOL_PREFIXES=(/vol1 /vol2 /vol3 /vol4 /vol5 /vol6 /vol7 /vol8 /vol9)
 AI_INSTALLER=""
 
@@ -25,72 +25,83 @@ fi
 
 cd "$AI_INSTALLER"
 
-# 2. 当前版本
-echo "📦 正在检测当前 Ollama 客户端版本..."
+# 2. 获取当前版本
+echo "📦 检测当前版本..."
 if [ -x "./ollama/bin/ollama" ]; then
-    VERSION_RAW=$(./ollama/bin/ollama --version 2>&1)
-    CLIENT_VER=$(echo "$VERSION_RAW" | grep -i "client version" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-    echo "📦 当前版本：v$CLIENT_VER（客户端）"
+    RAW=$(./ollama/bin/ollama --version 2>&1)
+    CLIENT_VER=$(echo "$RAW" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+    echo "📦 当前版本：v$CLIENT_VER"
 fi
 
-# 3. 获取最新版本号（使用 releases.atom，极稳定）
+# 3. 获取最新版本号（不访问 github.com，仅用镜像源）
 echo "🌐 获取 Ollama 最新版本号..."
 
-LATEST_TAG=$(curl -s https://github.com/ollama/ollama/releases.atom \
+LATEST_TAG=$(curl -sL https://ghproxy.cn/https://github.com/ollama/ollama/releases.atom \
     | grep -oP '(?<=<title>v)[0-9]+\.[0-9]+\.[0-9]+(?=</title>)' \
     | head -n 1)
 
-# 如果失败：给默认值，不阻塞流程
 if [ -z "$LATEST_TAG" ]; then
-    echo "⚠️ 无法从 GitHub 获取最新版本号，网络可能受限"
-    echo "➡️ 默认使用 v0.13.1（不会停止脚本）"
+    echo "⚠️ 镜像源无法解析版本号，使用默认最新版本 v0.13.1"
     LATEST_TAG="0.13.1"
-else
-    echo "📦 最新版本号：v$LATEST_TAG"
 fi
 
+echo "📦 最新可用版本：v$LATEST_TAG"
 TAG_FULL="v$LATEST_TAG"
 FILENAME="ollama-linux-amd64.tgz"
-URL="https://github.com/ollama/ollama/releases/download/$TAG_FULL/$FILENAME"
 
-echo "🔗 下载地址：$URL"
+# 4. 构建镜像下载链接
+DL1="https://ghproxy.cn/https://github.com/ollama/ollama/releases/download/$TAG_FULL/$FILENAME"
+DL2="https://hub.gitmirror.com/https://github.com/ollama/ollama/releases/download/$TAG_FULL/$FILENAME"
+DL3="https://fastgit.org/ollama/ollama/releases/download/$TAG_FULL/$FILENAME"
 
-# 4. 如有旧包检查完整性
+DOWNLOAD_URL=""
+
+echo "🌐 尝试使用镜像源下载..."
+
+# 5. 自动选择可访问的镜像链接
+for url in "$DL1" "$DL2" "$DL3"; do
+    if curl -s --head --fail "$url" >/dev/null 2>&1; then
+        DOWNLOAD_URL="$url"
+        break
+    fi
+done
+
+if [ -z "$DOWNLOAD_URL" ]; then
+    echo "❌ 所有镜像源都无法访问"
+    echo "➡️ 请确认你的网络是否可以访问 ghproxy.cn 或 gitmirror"
+    exit 1
+fi
+
+echo "🔗 使用下载地址：$DOWNLOAD_URL"
+
+# 6. 如果已有文件且完整就跳过下载
 if [ -f "$FILENAME" ]; then
-    echo "🔍 检测本地包完整性..."
     if gzip -t "$FILENAME" 2>/dev/null; then
-        echo "✅ 本地压缩包正常"
+        echo "✅ 本地压缩包完整，跳过下载"
     else
         echo "❌ 本地文件损坏，重新下载"
         rm -f "$FILENAME"
     fi
 fi
 
-# 5. 下载文件
+# 7. 下载
 if [ ! -f "$FILENAME" ]; then
-    echo "⬇️ 下载 Ollama $TAG_FULL ..."
-    if command -v aria2c >/dev/null 2>&1; then
-        aria2c -x 16 -s 16 -k 1M -o "$FILENAME" "$URL"
-    else
-        curl -L -o "$FILENAME" "$URL"
-    fi
+    echo "⬇️ 开始下载 Ollama..."
+    curl -L -o "$FILENAME" "$DOWNLOAD_URL"
 fi
 
-# 6. 备份旧版本
-BACKUP_NAME="ollama_bk_$(date +%Y%m%d_%H%M%S)"
-mv ollama "$BACKUP_NAME"
-echo "📦 旧版本已备份：$BACKUP_NAME"
+# 8. 备份旧版本
+BK="ollama_bk_$(date +%Y%m%d_%H%M%S)"
+mv ollama "$BK"
+echo "📦 旧版本已备份：$BK"
 
-# 7. 解压新版本
-echo "📦 解压新版本..."
+# 9. 解压新版本
+echo "📦 解压中..."
 mkdir -p ollama
 tar -xzf "$FILENAME" -C ollama
 
-# 8. 结束
-if [ -x "./ollama/bin/ollama" ]; then
-    NEW_RAW=$(./ollama/bin/ollama --version 2>&1)
-    NEW_VER=$(echo "$NEW_RAW" | grep -i "client version" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-    echo "🎉 升级成功！新版本：v$NEW_VER（客户端）"
-fi
+echo "🔎 确认新版本..."
+NEW_RAW=$(./ollama/bin/ollama --version 2>&1)
+NEW_VER=$(echo "$NEW_RAW" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 
-echo "🚀 Ollama 已成功升级！"
+echo "🎉 升级完成！当前 Ollama 版本：v$NEW_VER"
