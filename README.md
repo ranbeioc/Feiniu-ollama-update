@@ -14,7 +14,7 @@
 **2. SSH 登录飞牛系统，执行以下命令：**
 
 ```bash
-curl -sL https://raw.githubusercontent.com/wzqvip/Feiniu-ollama-update/main/upgrade_ollama.sh | bash
+curl -sL https://raw.githubusercontent.com/ranbeioc/Feiniu-ollama-update/refs/heads/main/upgrade_ollama.sh | bash
 ```
 
 **3. 升级完成后，从应用商店手动重新启用 Ollama 即可。**
